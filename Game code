@@ -8,24 +8,62 @@
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', Courier, monospace; color: white; }
         #canvas-container { width: 100vw; height: 100vh; }
-        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; background: rgba(0,0,0,0.95); text-align: center; }
-        .overlay-win { background: #ffffff !important; color: #000 !important; z-index: 200; }
-        #win-light { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #fff; opacity: 0; z-index: 150; transition: opacity 0.4s ease-in; pointer-events: none; }
-        .btn { background: transparent; color: #ff0000; border: 2px solid #600; padding: 15px 30px; font-weight: bold; font-size: 14px; width: 220px; text-transform: uppercase; cursor: pointer; margin: 10px; z-index: 200; }
+        
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; z-index: 100; background: rgba(0,0,0,0.95);
+            text-align: center; transition: background 0.8s;
+        }
+
+        /* Win State Overlay */
+        .overlay-win { background: #fff !important; color: #000 !important; }
+
+        #win-light {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #fff; opacity: 0; z-index: 150; transition: opacity 0.4s ease-in;
+            pointer-events: none;
+        }
+
+        .btn {
+            background: transparent; color: #ff0000; border: 2px solid #600; padding: 15px 30px;
+            font-weight: bold; font-size: 14px; width: 220px; text-transform: uppercase; 
+            cursor: pointer; margin: 10px; z-index: 200;
+        }
+
+        /* Win Button Style */
         .btn-survivor { color: #000 !important; border-color: #000 !important; }
+        .btn-survivor:active { background: #eee; }
+
         #status-text { font-size: 32px; color: #ff0000; text-shadow: 0 0 10px #f00; margin-bottom: 20px; letter-spacing: 5px; }
-        .survivor-text { color: #000 !important; font-size: 42px; font-weight: 900; letter-spacing: 8px; margin-bottom: 40px; text-shadow: none !important; }
-        #hud { position: absolute; top: 40px; width: 100%; display: none; flex-direction: column; align-items: center; z-index: 50; pointer-events: none; }
+        .survivor-text { color: #000 !important; text-shadow: none !important; font-size: 40px; font-weight: 900; letter-spacing: 10px; margin-bottom: 40px;}
+
+        #hud {
+            position: absolute; top: 40px; width: 100%; display: none;
+            flex-direction: column; align-items: center; z-index: 50; pointer-events: none;
+        }
         #timer { font-size: 26px; color: #ff0000; font-weight: bold; }
-        #scare-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #f00; display: none; z-index: 300; animation: shake 0.05s infinite; }
-        @keyframes shake { 0% { transform: translate(10px, 10px); } 50% { transform: translate(-20px, -15px); } 100% { transform: translate(10px, -10px); } }
+
+        #scare-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #f00; display: none; z-index: 200; animation: shake 0.05s infinite;
+        }
+
+        @keyframes shake { 
+            0% { transform: translate(10px, 10px); } 
+            50% { transform: translate(-20px, -15px); } 
+            100% { transform: translate(10px, -10px); } 
+        }
     </style>
 </head>
 <body>
 
 <div id="win-light"></div>
 <div id="scare-overlay"></div>
-<div id="hud"><div id="timer">01:00</div></div>
+
+<div id="hud">
+    <div id="timer">01:00</div>
+</div>
 
 <div class="overlay" id="ui-container">
     <div id="status-text">EYE-8181</div>
@@ -39,11 +77,10 @@
 
 <script>
 let scene, camera, renderer, sphere, lon = 0, lat = 0;
-let ghosts = [], isPlaying = false, audioCtx, mainGain, droneOsc;
+let ghosts = [], isPlaying = false, audioCtx;
 let timeLeft = 60, timerInterval, currentMapUrl = "";
 let onPointerDownPointerX, onPointerDownPointerY, onPointerDownLon, onPointerDownLat, isDragging = false;
 
-// Fixed texture links
 const GHOST_IMG = "https://i.ibb.co/Z6XYpY4G/IMG-8181.png";
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -58,10 +95,10 @@ function init() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.getElementById('canvas-container').appendChild(renderer.domElement);
-    
-    const geo = new THREE.SphereGeometry(500, 60, 40); geo.scale(-1, 1, 1);
-    // Start with a dark gray color instead of total black so you can see movement
-    sphere = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x111111 }));
+
+    const geo = new THREE.SphereGeometry(500, 60, 40);
+    geo.scale(-1, 1, 1);
+    sphere = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x000000 }));
     scene.add(sphere);
 
     document.addEventListener('touchstart', onTouchStart, {passive:false});
@@ -69,68 +106,31 @@ function init() {
     document.addEventListener('touchend', onTouchEnd, {passive:false});
 }
 
-function initAudio() {
-    if (audioCtx) return;
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    mainGain = audioCtx.createGain();
-    mainGain.connect(audioCtx.destination);
-}
-
-function startDrone() {
-    if (droneOsc) droneOsc.stop();
-    droneOsc = audioCtx.createOscillator();
-    const droneGain = audioCtx.createGain();
-    droneOsc.type = 'sine';
-    droneOsc.frequency.setValueAtTime(55, audioCtx.currentTime); 
-    droneGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-    droneOsc.connect(droneGain);
-    droneGain.connect(mainGain);
-    droneOsc.start();
-}
-
-function playSfx(freq, type, vol, ramp) {
-    const osc = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    if (ramp) osc.frequency.exponentialRampToValueAtTime(ramp, audioCtx.currentTime + 0.5);
-    g.gain.setValueAtTime(vol, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
-    osc.connect(g); g.connect(mainGain);
-    osc.start(); osc.stop(audioCtx.currentTime + 0.5);
-}
-
 function preStart(url) {
-    initAudio();
     currentMapUrl = url;
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     document.getElementById('ui-container').style.display = 'none';
+    document.getElementById('win-light').style.opacity = '0';
     
-    // Attempt to load the background map
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin('anonymous');
-    loader.load(url, (tex) => {
-        sphere.material.map = tex; 
-        sphere.material.color.set(0xffffff); // Set back to full color
+    new THREE.TextureLoader().setCrossOrigin('anonymous').load(url, (tex) => {
+        sphere.material.map = tex;
+        sphere.material.color.set(0xffffff);
         sphere.material.needsUpdate = true;
-    }, undefined, (err) => {
-        console.warn("Map failed to load. Entering Dark Mode.");
+        beginHunt();
     });
-    
-    beginHunt();
 }
 
 function beginHunt() {
     spawnGhosts();
-    isPlaying = true; timeLeft = 60;
-    startDrone();
+    isPlaying = true;
+    timeLeft = 60;
     document.getElementById('hud').style.display = 'flex';
-    document.getElementById('ui-container').style.display = 'none';
-    document.getElementById('win-light').style.opacity = '0';
+    
     if(timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
         timeLeft--;
         document.getElementById('timer').innerText = `00:${timeLeft < 10 ? '0'+timeLeft : timeLeft}`;
-        if(timeLeft <= 0) triggerScreamer();
+        if(timeLeft <= 0) { triggerScreamer(); }
     }, 1000);
 }
 
@@ -138,10 +138,11 @@ function spawnGhosts() {
     ghosts.forEach(g => scene.remove(g)); ghosts = [];
     const tex = new THREE.TextureLoader().setCrossOrigin('anonymous').load(GHOST_IMG);
     for (let i = 0; i < 5; i++) {
-        const p = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+        const p = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
         setRandomPos(p);
         p.userData = { nextMove: Date.now() + 3000 };
-        scene.add(p); ghosts.push(p);
+        scene.add(p);
+        ghosts.push(p);
     }
 }
 
@@ -151,58 +152,109 @@ function setRandomPos(obj) {
     obj.lookAt(0,0,0);
 }
 
-function onTouchStart(e) { if(!isPlaying) return; isDragging = false; onPointerDownPointerX = e.touches[0].clientX; onPointerDownPointerY = e.touches[0].clientY; onPointerDownLon = lon; onPointerDownLat = lat; }
-function onTouchMove(e) { if(!isPlaying) return; e.preventDefault(); const t = e.touches[0]; if (Math.abs(t.clientX - onPointerDownPointerX) > 8) isDragging = true; lon = (onPointerDownPointerX - t.clientX) * 0.15 + onPointerDownLon; lat = (t.clientY - onPointerDownPointerY) * 0.15 + onPointerDownLat; lat = Math.max(-85, Math.min(85, lat)); }
+function onTouchStart(e) {
+    if(!isPlaying) return;
+    const t = e.touches[0];
+    isDragging = false;
+    onPointerDownPointerX = t.clientX;
+    onPointerDownPointerY = t.clientY;
+    onPointerDownLon = lon;
+    onPointerDownLat = lat;
+}
+
+function onTouchMove(e) {
+    if(!isPlaying) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - onPointerDownPointerX) > 8 || Math.abs(t.clientY - onPointerDownPointerY) > 8) isDragging = true;
+    lon = (onPointerDownPointerX - t.clientX) * 0.15 + onPointerDownLon;
+    lat = (t.clientY - onPointerDownPointerY) * 0.15 + onPointerDownLat;
+    lat = Math.max(-85, Math.min(85, lat));
+}
 
 function onTouchEnd() {
     if(!isPlaying || isDragging) return;
-    mouse.x = (onPointerDownPointerX / window.innerWidth) * 2 - 1; mouse.y = -(onPointerDownPointerY / window.innerHeight) * 2 + 1;
+    mouse.x = (onPointerDownPointerX / window.innerWidth) * 2 - 1;
+    mouse.y = -(onPointerDownPointerY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
     const hits = raycaster.intersectObjects(ghosts);
+    
     if (hits.length > 0) {
-        playSfx(150, 'sawtooth', 0.5, 50);
-        scene.remove(hits[0].object);
-        ghosts = ghosts.filter(g => g !== hits[0].object);
+        const target = hits[0].object;
+        scene.remove(target);
+        ghosts = ghosts.filter(g => g !== target);
         if (ghosts.length === 0) triggerWin();
-    } else { triggerScreamer(); }
+    } else { 
+        triggerScreamer(); 
+    }
 }
 
 function triggerWin() {
-    isPlaying = false; clearInterval(timerInterval);
-    if (droneOsc) droneOsc.stop();
-    playSfx(800, 'sine', 0.8, 1200);
-    document.getElementById('win-light').style.opacity = '1';
-    setTimeout(showWinMenu, 500);
+    isPlaying = false;
+    clearInterval(timerInterval);
+    document.getElementById('win-light').style.opacity = '1'; 
+    setTimeout(() => {
+        showWinMenu();
+    }, 500);
 }
 
 function triggerScreamer() {
-    isPlaying = false; clearInterval(timerInterval);
-    if (droneOsc) droneOsc.stop();
+    isPlaying = false;
+    clearInterval(timerInterval);
     document.getElementById('scare-overlay').style.display = 'block';
-    const s = audioCtx.createOscillator(); const g = audioCtx.createGain();
-    s.type = 'sawtooth'; s.frequency.setValueAtTime(1200, audioCtx.currentTime);
-    s.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 1);
-    g.gain.setValueAtTime(1, audioCtx.currentTime); s.connect(g); g.connect(mainGain);
-    s.start(); s.stop(audioCtx.currentTime + 1);
-    setTimeout(() => { document.getElementById('scare-overlay').style.display = 'none'; showLoseMenu(); }, 1000);
+    playSfx(1100, 40, 0.9);
+    setTimeout(() => {
+        document.getElementById('scare-overlay').style.display = 'none';
+        showLoseMenu();
+    }, 1000);
 }
 
 function showWinMenu() {
     document.getElementById('hud').style.display = 'none';
-    const c = document.getElementById('ui-container');
-    c.className = "overlay overlay-win"; c.style.display = 'flex';
-    document.getElementById('status-text').innerText = "SURVIVOR";
-    document.getElementById('status-text').style.color = "#000";
-    document.getElementById('menu-content').innerHTML = `<button class="btn btn-survivor" onclick="beginHunt()">RESTART</button><button class="btn btn-survivor" onclick="location.reload()">MAIN MENU</button>`;
+    const container = document.getElementById('ui-container');
+    const status = document.getElementById('status-text');
+    const content = document.getElementById('menu-content');
+    
+    container.className = "overlay overlay-win";
+    container.style.display = 'flex';
+    status.innerText = "SURVIVOR";
+    status.className = "survivor-text";
+    
+    content.innerHTML = `
+        <button class="btn btn-survivor" onclick="restartLevel()">RESTART</button>
+        <button class="btn btn-survivor" onclick="location.reload()">MAIN MENU</button>
+    `;
 }
 
 function showLoseMenu() {
     document.getElementById('hud').style.display = 'none';
-    const c = document.getElementById('ui-container');
-    c.className = "overlay"; c.style.display = 'flex';
-    const s = document.getElementById('status-text');
-    s.innerText = "CORRUPTED"; s.style.color = "#ff0000";
-    document.getElementById('menu-content').innerHTML = `<button class="btn" onclick="beginHunt()">RESTART</button><button class="btn" onclick="location.reload()">MAIN MENU</button>`;
+    const container = document.getElementById('ui-container');
+    const status = document.getElementById('status-text');
+    const content = document.getElementById('menu-content');
+    
+    container.className = "overlay";
+    container.style.display = 'flex';
+    status.innerText = "CORRUPTED";
+    status.className = "";
+    status.style.color = "#ff0000";
+    
+    content.innerHTML = `
+        <button class="btn" onclick="restartLevel()">RESTART</button>
+        <button class="btn" onclick="location.reload()">MAIN MENU</button>
+    `;
+}
+
+function restartLevel() {
+    location.reload(); // Fresh reload for best performance
+}
+
+function playSfx(start, end, vol) {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'sawtooth'; osc.frequency.setValueAtTime(start, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(end, audioCtx.currentTime + 1);
+    g.gain.value = vol; osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(); osc.stop(audioCtx.currentTime + 1);
 }
 
 function animate() {
