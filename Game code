@@ -6,17 +6,23 @@
     <title>EYE-8181</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', Courier, monospace; color: white; }
-        #canvas-container { width: 100vw; height: 100vh; }
+        /* CRITICAL: Stops the "Scrolling Up" bug and pull-to-refresh */
+        html, body { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; touch-action: none; position: fixed;
+            background: #000; font-family: 'Courier New', Courier, monospace; 
+        }
+        #canvas-container { width: 100vw; height: 100vh; touch-action: none; }
         .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; background: rgba(0,0,0,0.95); text-align: center; }
         .overlay-win { background: #ffffff !important; color: #000 !important; z-index: 200; }
         #win-light { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #fff; opacity: 0; z-index: 150; transition: opacity 0.4s ease-in; pointer-events: none; }
         .btn { background: transparent; color: #ff0000; border: 2px solid #600; padding: 15px 30px; font-weight: bold; font-size: 14px; width: 220px; text-transform: uppercase; cursor: pointer; margin: 10px; z-index: 200; }
         .btn-survivor { color: #000 !important; border-color: #000 !important; }
+        #hud { position: absolute; top: 40px; width: 100%; display: none; justify-content: space-between; align-items: center; z-index: 50; padding: 0 20px; box-sizing: border-box; pointer-events: none; }
+        #timer { font-size: 26px; color: #ff0000; font-weight: bold; flex-grow: 1; text-align: center; }
+        #pause-btn { pointer-events: auto; font-size: 20px; color: #ff0000; background: rgba(0,0,0,0.5); border: 1px solid #600; width: 45px; height: 45px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
         #status-text { font-size: 32px; color: #ff0000; text-shadow: 0 0 10px #f00; margin-bottom: 20px; letter-spacing: 5px; }
         .survivor-text { color: #000 !important; font-size: 42px; font-weight: 900; letter-spacing: 8px; margin-bottom: 40px; text-shadow: none !important; }
-        #hud { position: absolute; top: 40px; width: 100%; display: none; flex-direction: column; align-items: center; z-index: 50; pointer-events: none; }
-        #timer { font-size: 26px; color: #ff0000; font-weight: bold; }
         #scare-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #f00; display: none; z-index: 300; animation: shake 0.05s infinite; }
         @keyframes shake { 0% { transform: translate(10px, 10px); } 50% { transform: translate(-20px, -15px); } 100% { transform: translate(10px, -10px); } }
     </style>
@@ -25,7 +31,11 @@
 
 <div id="win-light"></div>
 <div id="scare-overlay"></div>
-<div id="hud"><div id="timer">01:00</div></div>
+<div id="hud">
+    <div style="width: 45px;"></div>
+    <div id="timer">01:00</div>
+    <button id="pause-btn" onclick="togglePause(event)">||</button>
+</div>
 
 <div class="overlay" id="ui-container">
     <div id="status-text">EYE-8181</div>
@@ -39,11 +49,10 @@
 
 <script>
 let scene, camera, renderer, sphere, lon = 0, lat = 0;
-let ghosts = [], isPlaying = false, audioCtx, mainGain, droneOsc;
+let ghosts = [], isPlaying = false, isPaused = false, audioCtx, mainGain, droneOsc;
 let timeLeft = 60, timerInterval, currentMapUrl = "";
-let onPointerDownPointerX, onPointerDownPointerY, onPointerDownLon, onPointerDownLat, isDragging = false;
+let startX, startY, onPointerDownLon, onPointerDownLat, isDragging = false;
 
-// Fixed texture links
 const GHOST_IMG = "https://i.ibb.co/Z6XYpY4G/IMG-8181.png";
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -58,26 +67,26 @@ function init() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.getElementById('canvas-container').appendChild(renderer.domElement);
-    
     const geo = new THREE.SphereGeometry(500, 60, 40); geo.scale(-1, 1, 1);
-    // Start with a dark gray color instead of total black so you can see movement
     sphere = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x111111 }));
     scene.add(sphere);
 
+    window.addEventListener('touchmove', (e) => { if(isPlaying) e.preventDefault(); }, { passive: false });
     document.addEventListener('touchstart', onTouchStart, {passive:false});
     document.addEventListener('touchmove', onTouchMove, {passive:false});
     document.addEventListener('touchend', onTouchEnd, {passive:false});
 }
 
-function initAudio() {
-    if (audioCtx) return;
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    mainGain = audioCtx.createGain();
-    mainGain.connect(audioCtx.destination);
+function initAudio() { 
+    if (!audioCtx) { 
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)(); 
+        mainGain = audioCtx.createGain(); 
+        mainGain.connect(audioCtx.destination); 
+    } 
 }
 
 function startDrone() {
-    if (droneOsc) droneOsc.stop();
+    if (droneOsc) try { droneOsc.stop(); } catch(e){}
     droneOsc = audioCtx.createOscillator();
     const droneGain = audioCtx.createGain();
     droneOsc.type = 'sine';
@@ -88,50 +97,54 @@ function startDrone() {
     droneOsc.start();
 }
 
-function playSfx(freq, type, vol, ramp) {
-    const osc = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    if (ramp) osc.frequency.exponentialRampToValueAtTime(ramp, audioCtx.currentTime + 0.5);
+function playSfx(freq, type, vol, ramp, duration = 0.5) {
+    if(!audioCtx) return;
+    const osc = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if (ramp) osc.frequency.exponentialRampToValueAtTime(ramp, audioCtx.currentTime + duration);
     g.gain.setValueAtTime(vol, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
     osc.connect(g); g.connect(mainGain);
-    osc.start(); osc.stop(audioCtx.currentTime + 0.5);
+    osc.start(); osc.stop(audioCtx.currentTime + duration);
 }
 
 function preStart(url) {
-    initAudio();
-    currentMapUrl = url;
+    initAudio(); currentMapUrl = url;
     document.getElementById('ui-container').style.display = 'none';
-    
-    // Attempt to load the background map
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin('anonymous');
-    loader.load(url, (tex) => {
-        sphere.material.map = tex; 
-        sphere.material.color.set(0xffffff); // Set back to full color
-        sphere.material.needsUpdate = true;
-    }, undefined, (err) => {
-        console.warn("Map failed to load. Entering Dark Mode.");
+    new THREE.TextureLoader().setCrossOrigin('anonymous').load(url, (tex) => {
+        sphere.material.map = tex; sphere.material.color.set(0xffffff); sphere.material.needsUpdate = true;
     });
-    
     beginHunt();
 }
 
 function beginHunt() {
-    spawnGhosts();
-    isPlaying = true; timeLeft = 60;
+    spawnGhosts(); isPlaying = true; isPaused = false; timeLeft = 60;
     startDrone();
     document.getElementById('hud').style.display = 'flex';
     document.getElementById('ui-container').style.display = 'none';
     document.getElementById('win-light').style.opacity = '0';
     if(timerInterval) clearInterval(timerInterval);
-    timerInterval = setInterval(() => {
-        timeLeft--;
-        document.getElementById('timer').innerText = `00:${timeLeft < 10 ? '0'+timeLeft : timeLeft}`;
-        if(timeLeft <= 0) triggerScreamer();
+    timerInterval = setInterval(() => { 
+        if(!isPaused && isPlaying) { 
+            timeLeft--; 
+            document.getElementById('timer').innerText = `00:${timeLeft < 10 ? '0'+timeLeft : timeLeft}`; 
+            if(timeLeft <= 0) triggerScreamer(); 
+        } 
     }, 1000);
+}
+
+function togglePause(event) {
+    if(event) { event.stopPropagation(); event.preventDefault(); }
+    if(!isPlaying) return;
+    isPaused = !isPaused;
+    const c = document.getElementById('ui-container');
+    const content = document.getElementById('menu-content');
+    const s = document.getElementById('status-text');
+    if(isPaused) {
+        if (droneOsc) try { droneOsc.stop(); } catch(e){}
+        c.style.display = 'flex'; c.className = "overlay"; s.innerText = "PAUSED"; s.style.color = "#ff0000";
+        content.innerHTML = `<button class="btn" onclick="togglePause()">RESUME</button><button class="btn" onclick="beginHunt()">RESTART</button><button class="btn" onclick="location.reload()">MAIN MENU</button>`;
+    } else { startDrone(); c.style.display = 'none'; }
 }
 
 function spawnGhosts() {
@@ -139,8 +152,7 @@ function spawnGhosts() {
     const tex = new THREE.TextureLoader().setCrossOrigin('anonymous').load(GHOST_IMG);
     for (let i = 0; i < 5; i++) {
         const p = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-        setRandomPos(p);
-        p.userData = { nextMove: Date.now() + 3000 };
+        setRandomPos(p); p.userData = { nextMove: Date.now() + 3000 };
         scene.add(p); ghosts.push(p);
     }
 }
@@ -151,39 +163,55 @@ function setRandomPos(obj) {
     obj.lookAt(0,0,0);
 }
 
-function onTouchStart(e) { if(!isPlaying) return; isDragging = false; onPointerDownPointerX = e.touches[0].clientX; onPointerDownPointerY = e.touches[0].clientY; onPointerDownLon = lon; onPointerDownLat = lat; }
-function onTouchMove(e) { if(!isPlaying) return; e.preventDefault(); const t = e.touches[0]; if (Math.abs(t.clientX - onPointerDownPointerX) > 8) isDragging = true; lon = (onPointerDownPointerX - t.clientX) * 0.15 + onPointerDownLon; lat = (t.clientY - onPointerDownPointerY) * 0.15 + onPointerDownLat; lat = Math.max(-85, Math.min(85, lat)); }
+function onTouchStart(e) { 
+    if(!isPlaying || isPaused) return; 
+    const t = e.touches[0];
+    startX = t.clientX; startY = t.clientY;
+    onPointerDownLon = lon; onPointerDownLat = lat; 
+    isDragging = false;
+}
 
-function onTouchEnd() {
-    if(!isPlaying || isDragging) return;
-    mouse.x = (onPointerDownPointerX / window.innerWidth) * 2 - 1; mouse.y = -(onPointerDownPointerY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(ghosts);
-    if (hits.length > 0) {
-        playSfx(150, 'sawtooth', 0.5, 50);
-        scene.remove(hits[0].object);
-        ghosts = ghosts.filter(g => g !== hits[0].object);
-        if (ghosts.length === 0) triggerWin();
-    } else { triggerScreamer(); }
+function onTouchMove(e) { 
+    if(!isPlaying || isPaused) return; 
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - startX);
+    const dy = Math.abs(t.clientY - startY);
+    if (dx > 5 || dy > 5) isDragging = true; 
+    lon = (startX - t.clientX) * 0.15 + onPointerDownLon; 
+    lat = (t.clientY - startY) * 0.15 + onPointerDownLat; 
+    lat = Math.max(-85, Math.min(85, lat)); 
+}
+
+function onTouchEnd(e) {
+    if(!isPlaying || isPaused) return;
+    if(e.target.id === 'pause-btn') return;
+    if(!isDragging) {
+        mouse.x = (startX / window.innerWidth) * 2 - 1; 
+        mouse.y = -(startY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(ghosts);
+        if (hits.length > 0) {
+            playSfx(150, 'sawtooth', 0.5, 50); // Kill Sound
+            scene.remove(hits[0].object);
+            ghosts = ghosts.filter(g => g !== hits[0].object);
+            if (ghosts.length === 0) triggerWin();
+        } else { triggerScreamer(); }
+    }
 }
 
 function triggerWin() {
     isPlaying = false; clearInterval(timerInterval);
-    if (droneOsc) droneOsc.stop();
-    playSfx(800, 'sine', 0.8, 1200);
+    if (droneOsc) try { droneOsc.stop(); } catch(e){}
+    playSfx(800, 'sine', 0.8, 1200); // Escape Sound
     document.getElementById('win-light').style.opacity = '1';
     setTimeout(showWinMenu, 500);
 }
 
 function triggerScreamer() {
     isPlaying = false; clearInterval(timerInterval);
-    if (droneOsc) droneOsc.stop();
+    if (droneOsc) try { droneOsc.stop(); } catch(e){}
     document.getElementById('scare-overlay').style.display = 'block';
-    const s = audioCtx.createOscillator(); const g = audioCtx.createGain();
-    s.type = 'sawtooth'; s.frequency.setValueAtTime(1200, audioCtx.currentTime);
-    s.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 1);
-    g.gain.setValueAtTime(1, audioCtx.currentTime); s.connect(g); g.connect(mainGain);
-    s.start(); s.stop(audioCtx.currentTime + 1);
+    playSfx(1200, 'sawtooth', 1.0, 40, 1.0); // Scream Sound
     setTimeout(() => { document.getElementById('scare-overlay').style.display = 'none'; showLoseMenu(); }, 1000);
 }
 
@@ -191,8 +219,8 @@ function showWinMenu() {
     document.getElementById('hud').style.display = 'none';
     const c = document.getElementById('ui-container');
     c.className = "overlay overlay-win"; c.style.display = 'flex';
-    document.getElementById('status-text').innerText = "SURVIVOR";
-    document.getElementById('status-text').style.color = "#000";
+    const s = document.getElementById('status-text');
+    s.innerText = "SURVIVOR"; s.className = "survivor-text"; s.style.color = "#000";
     document.getElementById('menu-content').innerHTML = `<button class="btn btn-survivor" onclick="beginHunt()">RESTART</button><button class="btn btn-survivor" onclick="location.reload()">MAIN MENU</button>`;
 }
 
@@ -201,7 +229,7 @@ function showLoseMenu() {
     const c = document.getElementById('ui-container');
     c.className = "overlay"; c.style.display = 'flex';
     const s = document.getElementById('status-text');
-    s.innerText = "CORRUPTED"; s.style.color = "#ff0000";
+    s.innerText = "CORRUPTED"; s.className = ""; s.style.color = "#ff0000";
     document.getElementById('menu-content').innerHTML = `<button class="btn" onclick="beginHunt()">RESTART</button><button class="btn" onclick="location.reload()">MAIN MENU</button>`;
 }
 
@@ -209,11 +237,11 @@ function animate() {
     requestAnimationFrame(animate);
     let phi = THREE.MathUtils.degToRad(90 - lat), theta = THREE.MathUtils.degToRad(lon);
     camera.lookAt(500 * Math.sin(phi) * Math.cos(theta), 500 * Math.cos(phi), 500 * Math.sin(phi) * Math.sin(theta));
-    if(isPlaying) {
-        ghosts.forEach(g => {
-            if (Date.now() > g.userData.nextMove) { setRandomPos(g); g.userData.nextMove = Date.now() + 3000; }
-            g.lookAt(0,0,0);
-        });
+    if(isPlaying && !isPaused) { 
+        ghosts.forEach(g => { 
+            if (Date.now() > g.userData.nextMove) { setRandomPos(g); g.userData.nextMove = Date.now() + 3000; } 
+            g.lookAt(0,0,0); 
+        }); 
     }
     renderer.render(scene, camera);
 }
